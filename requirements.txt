@@ -1,0 +1,33 @@
+# Core dependencies
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.12
+pydantic>=2.10.0
+pydantic-settings>=2.6.0
+
+# MarkItDown and document processing
+markitdown[all]>=0.1.0
+
+# AI/LLM
+openai>=1.57.0
+httpx>=0.28.0
+
+# Database & Cache
+redis>=5.2.0
+aioredis>=2.0.0
+
+# Security
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+api-key-hash>=1.0.0
+
+# Utilities
+aiofiles>=24.1.0
+python-dotenv>=1.0.0
+loguru>=0.7.0
+
+# Rate limiting
+slowapi>=0.1.9
+
+# Prometheus metrics
+prometheus-client>=0.21.0
