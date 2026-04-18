@@ -5,22 +5,24 @@ import os
 import io
 import uuid
 import time
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from fastapi import (
     APIRouter, Depends, HTTPException, UploadFile, File,
     Form, Header, Request, BackgroundTasks
 )
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse, Response
 import aiofiles
 
 from app.models.schemas import (
     ConversionResponse, AISummaryResponse, ConvertAndSummarizeResponse,
     ErrorResponse, HealthResponse, UsageStats,
     ChatCompletionRequest, ChatCompletionResponse, ChatCompletionChoice,
-    ChatCompletionUsage, ChatMessage, ModelsResponse, ModelInfo
+    ChatCompletionUsage, ChatMessage, ModelsResponse, ModelInfo,
+    BatchJobResponse, BatchJobStatus, BatchDownloadResponse
 )
 from app.services.converter import document_service
+from app.services.batch import batch_service, TaskStatus
 from app.core.config import settings
 from app.core.security import verify_api_key, hash_api_key
 from loguru import logger
@@ -480,3 +482,133 @@ async def list_api_keys(key_info: dict = Depends(verify_auth)):
             for info in API_KEYS_DB.values()
         ]
     }
+
+
+# ==================== Batch Conversion ====================
+
+@router.post(
+    "/batch-convert",
+    response_model=BatchJobResponse,
+    responses={400: {"model": ErrorResponse}, 401: {"model": ErrorResponse}},
+    tags=["Batch"]
+)
+async def create_batch_job(
+    files: List[UploadFile] = File(..., description="Files to convert"),
+    key_info: dict = Depends(verify_auth)
+):
+    """
+    Create a batch conversion job.
+    
+    Upload multiple files for conversion. Returns a job_id for tracking.
+    Use /batch-status/{job_id} to check progress.
+    Use /batch-download/{job_id} to download results as ZIP.
+    """
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+    
+    if len(files) > 50:
+        raise HTTPException(status_code=400, detail="Maximum 50 files per batch")
+    
+    # Read all files
+    file_data = []
+    for file in files:
+        # Validate extension
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext not in settings.ALLOWED_EXTENSIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported format: {file.filename} ({file_ext})"
+            )
+        
+        content = await file.read()
+        if len(content) > settings.MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File too large: {file.filename}"
+            )
+        
+        file_data.append((file.filename, content))
+    
+    # Create batch job
+    job_id = await batch_service.create_job(file_data)
+    
+    # Update stats
+    USAGE_STATS["total_files"] += len(files)
+    
+    return BatchJobResponse(
+        success=True,
+        job_id=job_id,
+        total_files=len(files),
+        message=f"Batch job created with {len(files)} files"
+    )
+
+
+@router.get(
+    "/batch-status/{job_id}",
+    response_model=BatchJobStatus,
+    responses={404: {"model": ErrorResponse}},
+    tags=["Batch"]
+)
+async def get_batch_status(
+    job_id: str,
+    key_info: dict = Depends(verify_auth)
+):
+    """
+    Get batch job status.
+    
+    Returns progress, completed files, and task details.
+    """
+    status = batch_service.get_job(job_id)
+    if not status:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+    
+    return BatchJobStatus(**status)
+
+
+@router.get(
+    "/batch-download/{job_id}",
+    responses={404: {"model": ErrorResponse}},
+    tags=["Batch"]
+)
+async def download_batch_result(
+    job_id: str,
+    key_info: dict = Depends(verify_auth)
+):
+    """
+    Download batch conversion results as ZIP.
+    
+    Returns a ZIP file containing all converted .md files.
+    Only available when job status is 'completed'.
+    """
+    status = batch_service.get_job(job_id)
+    if not status:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+    
+    if status["status"] != "completed":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Job not completed. Current status: {status['status']}"
+        )
+    
+    zip_content = batch_service.generate_zip(job_id)
+    if not zip_content:
+        raise HTTPException(status_code=500, detail="Failed to generate ZIP")
+    
+    # Return ZIP file
+    return Response(
+        content=zip_content,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f"attachment; filename=markflow-{job_id}.zip"
+        }
+    )
+
+
+@router.delete("/batch/{job_id}", tags=["Batch"])
+async def delete_batch_job(
+    job_id: str,
+    key_info: dict = Depends(verify_auth)
+):
+    """Delete a batch job and free memory"""
+    batch_service.cleanup_job(job_id)
+    return {"success": True, "message": f"Job {job_id} deleted"}

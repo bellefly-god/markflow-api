@@ -19,7 +19,6 @@ aioredis>=2.0.0
 # Security
 python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.4
-api-key-hash>=1.0.0
 
 # Utilities
 aiofiles>=24.1.0

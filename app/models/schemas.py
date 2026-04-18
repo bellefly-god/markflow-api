@@ -193,3 +193,43 @@ class ModelsResponse(BaseModel):
     """Response for /models endpoint"""
     object: str = "list"
     data: List[ModelInfo]
+
+
+# ==================== Batch Conversion Models ====================
+
+class BatchJobResponse(BaseModel):
+    """Response for batch job creation"""
+    success: bool = True
+    job_id: str
+    total_files: int
+    message: str = "Batch job created"
+
+
+class BatchTaskStatus(BaseModel):
+    """Status of a single task in batch job"""
+    task_id: str
+    file_name: str
+    status: str
+    error: Optional[str] = None
+
+
+class BatchJobStatus(BaseModel):
+    """Response for batch job status"""
+    job_id: str
+    status: str
+    total_files: int
+    completed_files: int
+    failed_files: int
+    progress: float
+    created_at: float
+    started_at: Optional[float] = None
+    completed_at: Optional[float] = None
+    tasks: List[BatchTaskStatus] = []
+
+
+class BatchDownloadResponse(BaseModel):
+    """Response for batch download"""
+    success: bool = True
+    job_id: str
+    download_url: Optional[str] = None
+    message: str
